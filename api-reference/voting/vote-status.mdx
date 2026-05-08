@@ -1,0 +1,80 @@
+---
+title: 'GET /voting/vote-status — check the election phase'
+description: "GET /voting/vote-status — returns the election's current phase: register, vote_started, or vote_ended. Use this before phase-sensitive operations."
+---
+
+This endpoint returns the current phase of the election as a single string value. Poll it before taking phase-sensitive actions: check for `register` before adding voters, confirm `vote_started` before accepting ballot submissions, or verify `vote_ended` before fetching results. The value is read directly from the `voting_config` table and reflects real-time state.
+
+## Request
+
+```bash
+GET /voting/vote-status
+```
+
+No request body or query parameters are required.
+
+## Response
+
+<ResponseField name="voting_status" type="string" required>
+  The current election phase. One of three possible values:
+
+  <Expandable title="possible values">
+    <ResponseField name="register" type="string">
+      The election has not started. Voters can be registered and the election configuration can still be updated.
+    </ResponseField>
+
+    <ResponseField name="vote_started" type="string">
+      The election is running. Credential emails have been sent to all registered voters and ballots can now be submitted.
+    </ResponseField>
+
+    <ResponseField name="vote_ended" type="string">
+      The election is closed. Ballots have been tallied and results are available via `GET /results/tally`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `200` | Current election phase returned successfully. |
+| `404` | No voting configuration record was found in the database. |
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl --request GET \
+  --url https://your-api-host/voting/vote-status
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json register
+{
+  "voting_status": "register"
+}
+```
+
+```json vote_started
+{
+  "voting_status": "vote_started"
+}
+```
+
+```json vote_ended
+{
+  "voting_status": "vote_ended"
+}
+```
+
+```json 404
+{
+  "detail": "Voting configuration not found"
+}
+```
+
+</ResponseExample>

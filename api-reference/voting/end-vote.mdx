@@ -1,0 +1,112 @@
+---
+title: 'POST /voting/end-vote — close and tally the election'
+description: 'Closes voting, decrypts all encrypted ballots with the counter RSA key, verifies signatures and N2 hashes, and returns the final tally.'
+---
+
+Calling this endpoint closes the election and produces the final results. The server marks the election status as `vote_ended`, then retrieves every encrypted ballot from the anonymizer service. Each ballot is decrypted using the counter's RSA private key. The counter service then verifies the admin's digital signature on each ballot and checks the SHA-256 hash of the voter's N2 nonce. Ballots that pass both checks are counted; those that fail are logged as `invalid_signature` or `invalid_n2` respectively. The endpoint returns a complete breakdown alongside the candidate tally.
+
+## Request
+
+```bash
+POST /voting/end-vote
+```
+
+No request body is required.
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  Always `"success"` on a 200 response.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Always `"Votes counted successfully"` on a 200 response.
+</ResponseField>
+
+<ResponseField name="results" type="object" required>
+  Breakdown of all processed ballots.
+
+  <Expandable title="results properties">
+    <ResponseField name="valid" type="number" required>
+      Number of ballots that passed both signature verification and N2 hash checks and were included in the tally.
+    </ResponseField>
+
+    <ResponseField name="invalid_signature" type="number" required>
+      Number of ballots rejected because the admin's digital signature could not be verified.
+    </ResponseField>
+
+    <ResponseField name="invalid_n2" type="number" required>
+      Number of ballots rejected because the N2 nonce hash did not match the stored credential.
+    </ResponseField>
+
+    <ResponseField name="tally" type="object" required>
+      Map of candidate name to vote count, containing only candidates who received at least one valid vote.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "status": "success",
+  "message": "Votes counted successfully",
+  "results": {
+    "valid": 5,
+    "invalid_signature": 0,
+    "invalid_n2": 1,
+    "tally": {
+      "Candidate A": 3,
+      "Candidate B": 2
+    }
+  }
+}
+```
+
+## HTTP status codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `200` | Election closed and ballots tallied successfully. |
+| `500` | An unexpected error occurred while counting votes, e.g. a decryption failure. |
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl --request POST \
+  --url https://your-api-host/voting/end-vote
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "success",
+  "message": "Votes counted successfully",
+  "results": {
+    "valid": 5,
+    "invalid_signature": 0,
+    "invalid_n2": 1,
+    "tally": {
+      "Candidate A": 3,
+      "Candidate B": 2
+    }
+  }
+}
+```
+
+```json 500
+{
+  "detail": "Error counting votes: <error details>"
+}
+```
+
+</ResponseExample>
+
+<Info>
+  The tally produced by this endpoint is also available later via `GET /results/tally` without needing to re-run the counting process.
+</Info>

@@ -1,0 +1,86 @@
+---
+title: 'POST /voters/register — register a new voter'
+description: 'POST /voters/register — add a voter email to the system. Returns 201 on success, 409 if already enrolled. Required before start-vote.'
+---
+
+Call this endpoint to enroll a new voter before the election opens. You supply the voter's email address, and the system records it in the database. On success the voter will receive credential emails containing the N1 and N2 codes they need for the voting flow. If the email is already registered the endpoint returns a `409` response with the same `RegisterResponse` shape so you can handle both cases uniformly.
+
+## Request
+
+`POST /voters/register`
+
+### Body
+
+<ParamField body="email" type="string" required>
+  The email address of the voter to register. Must be unique across all registered voters.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  Outcome of the registration attempt. `"success"` when the voter was created; `"error"` when registration was rejected (for example, a duplicate email).
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable description of the result, such as `"Voter registered successfully"` or `"Email already exists"`.
+</ResponseField>
+
+<ResponseField name="voter" type="string" required>
+  The email address of the voter concerned by this response.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `201` | Voter registered successfully. |
+| `409` | The email address is already enrolled in the system. |
+| `400` | Registration failed due to a malformed request or an unexpected server error. |
+
+<Expandable title="201 — success">
+
+```json
+{
+  "status": "success",
+  "message": "Voter registered successfully",
+  "voter": "user@example.com"
+}
+```
+
+</Expandable>
+
+<Expandable title="409 — email already exists">
+
+```json
+{
+  "status": "error",
+  "message": "Email already exists",
+  "voter": "user@example.com"
+}
+```
+
+</Expandable>
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://your-api/voters/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "alice@example.com"}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 201
+{
+  "status": "success",
+  "message": "Voter registered successfully",
+  "voter": "alice@example.com"
+}
+```
+
+</ResponseExample>

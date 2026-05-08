@@ -1,0 +1,103 @@
+---
+title: "Verify vote counts and individual ballots"
+description: "Retrieve the public tally of all valid votes, or confirm that your specific ballot was received and counted correctly using your N2 fingerprint."
+---
+
+The system provides two complementary verification mechanisms: a public tally that anyone can read, and a personal ballot lookup that lets each voter confirm their own vote was counted. Both endpoints are read-only and available as soon as votes have been processed.
+
+## View the public tally
+
+`GET /results/tally` returns the total count of valid votes and a per-candidate breakdown with percentages. Only votes that passed both signature and N2 validation are included — rejected ballots are excluded from all counts.
+
+```bash
+curl https://your-api.example.com/results/tally
+```
+
+Example response with votes:
+
+```json
+{
+  "total_votes": 5,
+  "tally": [
+    {"candidate": "Candidate A", "count": 3, "percentage": 60.0},
+    {"candidate": "Candidate B", "count": 2, "percentage": 40.0}
+  ]
+}
+```
+
+If no votes have been counted yet, the response is:
+
+```json
+{
+  "total_votes": 0,
+  "tally": []
+}
+```
+
+## Verify your individual vote
+
+`POST /results/verify-vote` accepts your N2 fingerprint and returns the status of your ballot. This lets you confirm that your vote was received and that its cryptographic validity checks passed.
+
+```bash
+curl -X POST https://your-api.example.com/results/verify-vote \
+  -H "Content-Type: application/json" \
+  -d '{"n2": "B3KZ9MX471WR"}'
+```
+
+There are four possible outcomes:
+
+### 1. Vote not found
+
+No ballot exists in the system with this N2 fingerprint. This can mean the vote was never submitted, the wrong N2 was provided, or the ballot was never received.
+
+```json
+{
+  "found": false,
+  "status": null,
+  "vote": null,
+  "message": "No vote found with this N2 fingerprint"
+}
+```
+
+### 2. Vote valid
+
+The ballot was received, the administrator's blind signature was verified, the N2 fingerprint matched, and the vote was included in the tally.
+
+```json
+{
+  "found": true,
+  "status": "valid",
+  "vote": "Candidate A",
+  "message": "Your vote was counted successfully"
+}
+```
+
+<Note>
+  The `vote` field is only populated when the status is `valid`. In all other outcomes it is `null`, because disclosing the choice of an invalidated ballot would reveal information unnecessarily.
+</Note>
+
+### 3. Vote invalid — signature check failed
+
+The ballot was received but the administrator's digital signature could not be verified. The vote was **not** counted. This typically means the ballot data was tampered with after signing, the wrong key was used, or there was a corruption during transmission.
+
+```json
+{
+  "found": true,
+  "status": "invalid_signature",
+  "vote": null,
+  "message": "Your vote was rejected due to invalid signature"
+}
+```
+
+### 4. Vote invalid — N2 fingerprint check failed
+
+The ballot was received but the N2 fingerprint did not match the voter's registered credentials. The vote was **not** counted. This can indicate that voter registration was not completed correctly, or the N2 value was computed incorrectly during submission.
+
+```json
+{
+  "found": true,
+  "status": "invalid_n2",
+  "vote": null,
+  "message": "Your vote was rejected due to invalid N2 fingerprint"
+}
+```

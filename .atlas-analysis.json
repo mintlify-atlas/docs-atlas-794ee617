@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Crypto E-Voting API",
+  "projectType": "api-service",
+  "projectName": "Crypto E-Voting API",
+  "projectDescription": "A FastAPI-based back-end for a cryptographic electronic voting system that uses RSA blind signatures, nonce-based credentials, and an anonymizer pipeline to ensure voter privacy and ballot integrity.",
   "theme": "luma",
-  "colors": {
-    "primary": "#0f3460",
-    "light": "#1a1a2e",
-    "dark": "#e8f0fe"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/Crypto-Project-ENSTA/back-end"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/Crypto-Project-ENSTA/back-end"
-    }
-  },
+  "primaryColor": "#0f3460",
+  "lightColor": "#1a1a2e",
+  "darkColor": "#e8f0fe",
   "navigation": {
     "tabs": [
       {
@@ -94,5 +82,28 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "RSA blind signature protocol ensuring administrator cannot link voter identity to ballot content",
+    "Two-factor nonce credential system (N1 + N2) for voter authentication and anonymization",
+    "Anonymizer pipeline that decouples voter identity from submitted encrypted ballots",
+    "Counter service that decrypts, verifies signatures, and tallies votes with full audit trail",
+    "Session-based N1 verification preventing double voting",
+    "Gmail API integration for secure credential delivery via email",
+    "Alembic-managed PostgreSQL migrations for reproducible database schema",
+    "Automatic vote finalization when all registered voters have submitted ballots"
+  ],
+  "publicApiSurface": [
+    "POST /voters/register",
+    "POST /voters/check_n1",
+    "POST /voters/submit_vote",
+    "POST /voting/start-vote",
+    "POST /voting/end-vote",
+    "GET /voting/vote-status",
+    "GET /results/tally",
+    "POST /results/verify-vote",
+    "GET /config/voting-system-config",
+    "PATCH /config/voting-system-config",
+    "GET /health"
+  ]
 }

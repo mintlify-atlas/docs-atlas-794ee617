@@ -1,0 +1,250 @@
+---
+title: "RSA blind signature voting protocol explained"
+description: "A step-by-step walkthrough of credential generation, ballot blinding, blind signing, unmasking, encryption, and verification as implemented in crypto.py."
+---
+
+The Crypto E-Voting API implements a textbook RSA blind signature scheme adapted for electronic voting. The protocol ensures that the administrator can certify a ballot's authenticity without ever seeing its content, that ballots are encrypted before reaching the anonymizer, and that every ballot can be verified at counting time using two independent checks. All cryptographic primitives live in `app/utils/crypto.py`.
+
+## Overview
+
+RSA blind signatures give you three guarantees simultaneously:
+
+- **Authenticity** — only the administrator (private-key holder) can produce a valid signature, so the counter can reject any ballot that was not legitimately issued.
+- **Secrecy** — the administrator signs a blinded value and never sees the original ballot, so it cannot link signatures to voters.
+- **Verifiability** — anyone with the administrator's public key can confirm that `s^e ≡ m (mod N)`, and the commissioner can confirm that the N2 fingerprint was legitimately generated.
+
+<Note>
+  RSA blind signatures were first described by David Chaum in 1982 and are the classical building block for privacy-preserving voting and digital cash schemes.
+</Note>
+
+## Credential generation
+
+Before voting begins the system generates two independent nonces for each voter: **N1** and **N2**.
+
+Both nonces are produced by `generate_nonce`, which draws from a 36-character alphabet (A–Z and 0–9) using Python's `secrets.choice` — a cryptographically secure random source:
+
+```python
+import secrets
+import string
+
+def generate_nonce(length: int = 12) -> str:
+    alphabet = string.ascii_uppercase + string.digits  # A-Z + 0-9
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+```
+
+A 12-character nonce drawn from 36 symbols provides a search space of 36¹² ≈ 4.7 × 10¹⁸ possibilities.
+
+| Nonce | Stored as | Purpose |
+|-------|-----------|---------|
+| N1 | Plaintext in `credentials.n1` | One-time submission token; consumed on ballot submission |
+| N2 | SHA-256 hash in `credentials.hash_n2` | Ballot fingerprint; verified at counting time |
+
+N2 is hashed before storage using `hash_n2`:
+
+```python
+import hashlib
+
+def hash_n2(n2: str) -> str:
+    if not n2:
+        raise ValueError("n2 cannot be empty")
+    return hashlib.sha256(n2.encode()).hexdigest()
+```
+
+<Note>
+  Storing only the SHA-256 hash of N2 means the database never holds the plaintext receipt. Even if the `credentials` table were leaked, an attacker could not reconstruct any voter's N2 value to forge a ballot.
+</Note>
+
+## Ballot creation
+
+A ballot is represented by `VoterBallotDTO`, which packages the vote choice, the voter's N2 nonce, and a fresh random component:
+
+```python
+from dataclasses import dataclass
+import secrets
+
+@dataclass
+class VoterBallotDTO:
+    vote: str
+    n2: str
+    random_bits: str
+
+    def __str__(self):
+        return f"({self.vote},{self.n2},{self.random_bits})"
+
+    def to_int(self) -> int:
+        """Convert ballot to integer for RSA operations"""
+        message = str(self)
+        return int.from_bytes(message.encode(), byteorder='big')
+```
+
+`create_ballot` populates `random_bits` with a URL-safe token to ensure uniqueness across ballots even when the vote choice and N2 are identical:
+
+```python
+def create_ballot(n2: str, vote: str) -> VoterBallotDTO:
+    random_bits = secrets.token_urlsafe(16)
+    return VoterBallotDTO(vote=vote, n2=n2, random_bits=random_bits)
+```
+
+`to_int()` serialises the ballot string — e.g. `(CandidateA,AF15GH258ZQP,abc123...)` — to bytes using UTF-8, then interprets those bytes as a big-endian integer. This integer `m` is the value that travels through the RSA operations.
+
+<Note>
+  The resulting integer must satisfy `m < N` (the RSA modulus) for the arithmetic to hold. `mask_ballot` raises a `ValueError` if this constraint is violated.
+</Note>
+
+## Blind signature protocol
+
+The blind signature protocol runs in four sub-steps. `VotingSystemService.get_blind_signed_ballot` orchestrates all of them.
+
+### Step 1 — Mask the ballot (voter side)
+
+`mask_ballot` blinds the integer ballot `m` using the administrator's RSA public key `(e, N)`:
+
+```python
+def mask_ballot(voter_ballot: VoterBallotDTO, administrator_pub_key: tuple[int, int]):
+    e, N = administrator_pub_key
+
+    m = voter_ballot.to_int()
+
+    if m >= N:
+        raise ValueError(f"Ballot message too large for RSA modulus N={N}")
+
+    # k must be coprime with N so it is invertible mod N
+    k = generate_coprime(N)
+
+    # Blinding: m' = m * k^e mod N
+    masked_ballot = (m * pow(k, e, N)) % N
+
+    return MaskedBallotDTO(masked_ballot=masked_ballot, k=k)
+```
+
+The blinding factor `k` is chosen uniformly at random from `[2, N-1]` subject to `gcd(k, N) = 1`. The masked value `m'` is computationally indistinguishable from a random element of ℤ_N, so the administrator learns nothing about `m`.
+
+**Formula:** `m' = m · k^e mod N`
+
+### Step 2 — Administrator signs the masked ballot
+
+`sign_masked_ballot` applies the administrator's RSA private exponent `d` to the masked ballot:
+
+```python
+def sign_masked_ballot(
+    masked_ballot: MaskedBallotDTO,
+    admin_private_key: int,
+    admin_N_public_key: int,
+) -> SignedMaskedBallotDTO:
+    d = admin_private_key
+    N = admin_N_public_key
+    signed_masked_ballot = pow(masked_ballot.masked_ballot, d, N)
+    return SignedMaskedBallotDTO(signed_masked_ballot=signed_masked_ballot)
+```
+
+**Formula:** `s' = (m')^d mod N`
+
+The administrator computes `s'` without knowing `k` or `m`. It returns only `s'`.
+
+### Step 3 — Unmask the signature (voter side)
+
+`unmask_signed_ballot` removes the blinding factor by multiplying `s'` by the modular inverse of `k`:
+
+```python
+def unmask_signed_ballot(
+    signed_masked_ballot: SignedMaskedBallotDTO,
+    masked_Ballot: MaskedBallotDTO,
+    admin_N_public_key: int,
+) -> SignedBallotDTO:
+    k_inverse = mod_inverse(masked_Ballot.k, admin_N_public_key)
+    signed_ballot = (signed_masked_ballot.signed_masked_ballot * k_inverse) % admin_N_public_key
+    return SignedBallotDTO(signed_ballot=signed_ballot)
+```
+
+**Formula:** `s = s' · k⁻¹ mod N`
+
+<Note>
+  The unblinding works because of the homomorphic property of RSA:
+
+  `s' = (m')^d = (m · k^e)^d = m^d · k^(ed) = m^d · k (mod N)`
+
+  Multiplying by `k⁻¹` cancels the blinding factor, leaving `s = m^d mod N` — a standard RSA signature on the original message.
+</Note>
+
+## Ballot encryption
+
+After unblinding, the voter encrypts the signed ballot `s` with the counter's RSA public key `(e_c, N_c)` before submission:
+
+```python
+def encrypt_signed_ballot(
+    signed_ballot: SignedBallotDTO,
+    counter_public_key: tuple[int, int],
+) -> EncryptedSignedBallotDTO:
+    m = signed_ballot.signed_ballot
+    e, N = counter_public_key
+
+    if not (0 <= m < N):
+        raise ValueError(f"Signed ballot value {m} is out of range [0, {N - 1}]")
+
+    encrypted = pow(m, e, N)
+    return EncryptedSignedBallotDTO(encrypted_signed_ballot=encrypted)
+```
+
+**Formula:** `c = s^e_c mod N_c`
+
+The anonymizer receives and stores `c`. Only the counter — the holder of the matching private key — can decrypt it.
+
+<Note>
+  Encrypting the signed ballot before submission ensures that the anonymizer cannot inspect ballot content. The anonymizer's only role is to verify N1 and forward the opaque ciphertext to the `votes` table.
+</Note>
+
+## Verification at counting time
+
+`CounterService.process_all_votes` runs two independent checks on every ballot after decryption.
+
+### Phase 1 — RSA decryption
+
+```python
+def decrypt_all_votes(self, counter_prv_key: tuple[int, int], encrypted_votes_list: list[Vote]) -> list[int]:
+    d, n = counter_prv_key
+    decrypted_ballots = []
+    for vote in encrypted_votes_list:
+        encrypted = int(vote.encrypted_vote)
+        decrypted = pow(encrypted, d, n)  # m = c^d mod N
+        decrypted_ballots.append(decrypted)
+    return decrypted_ballots
+```
+
+**Formula:** `s = c^d_c mod N_c`
+
+### Check 1 — Administrator signature verification
+
+`verify_signature` re-applies the administrator's public exponent to the decrypted value and attempts to decode the result as a UTF-8 ballot string:
+
+```python
+def verify_signature(self, decrypted: int) -> tuple[bool, str, str]:
+    e, N = self.administrator_service.PUBLIC_KEY
+    recovered_m = pow(decrypted, e, N)
+    byte_length = (recovered_m.bit_length() + 7) // 8
+    recovered_str = recovered_m.to_bytes(byte_length, byteorder='big').decode('utf-8')
+    recovered_str = recovered_str.strip("()")
+    parts = recovered_str.split(",")
+    if len(parts) != 3:
+        return False, "", ""
+    vote, n2, _ = parts
+    return True, vote, n2
+```
+
+**Formula:** `m = s^e_admin mod N_admin`
+
+If the recovered string cannot be split into exactly three comma-separated parts (`vote`, `n2`, `random_bits`) the ballot is marked `INVALID_SIGNATURE`.
+
+### Check 2 — N2 fingerprint verification
+
+The extracted `n2` value is hashed and looked up in the commissioner's credential store:
+
+```python
+def is_n2_hash_exist(self, n2: str) -> bool:
+    return self.commissioner_service.is_n2_hash_exist(n2=n2)
+```
+
+A ballot whose N2 hash does not exist in the `credentials` table is marked `INVALID_N2`. This rejects any ballot carrying a fabricated or reused N2.
+
+<Warning>
+  A ballot can pass the signature check (proving the administrator signed it) but still fail the N2 check (proving the voter's credential was not legitimately issued). Both checks are required for a ballot to count as `VALID`.
+</Warning>

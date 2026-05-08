@@ -1,0 +1,50 @@
+---
+title: "Crypto E-Voting API: secure anonymous ballot system"
+description: "FastAPI back-end for cryptographic e-voting. Uses RSA blind signatures, N1/N2 nonce credentials, and an anonymizer pipeline to guarantee ballot secrecy."
+---
+
+The Crypto E-Voting API is a FastAPI back-end for running cryptographically secure elections. It uses RSA blind signatures and a multi-party anonymizer pipeline so that every ballot is authenticated without being traceable back to the voter who cast it. The system guarantees ballot secrecy, prevents double voting, and allows every voter to independently verify that their vote was counted — all without trusting any single party.
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Set up the API locally and cast a test vote in minutes
+  </Card>
+  <Card title="Architecture overview" icon="diagram-project" href="/architecture/overview">
+    Understand the five-party cryptographic protocol
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference/overview">
+    Explore every endpoint: voters, voting session, results, and config
+  </Card>
+  <Card title="Voter registration guide" icon="user-plus" href="/guides/voter-registration">
+    Step-by-step walkthrough of the registration flow
+  </Card>
+</CardGroup>
+
+## What the API provides
+
+The API enforces four core cryptographic guarantees throughout an election:
+
+- **Ballot secrecy** — RSA blind signatures let the Commissioner sign a voter's ballot without seeing its content. The Administrator never learns what any individual voted.
+- **Double-vote prevention** — each voter's N1 nonce is tied to a server-side session. It is consumed on first use and then cleared, so replaying the same credential is rejected immediately.
+- **Individual verifiability** — after the election closes, every voter can submit their N2 fingerprint to `POST /results/verify-vote` and confirm whether their ballot was counted as valid.
+- **Anonymized ballots** — the Anonymizer pipeline receives encrypted votes from the VotingSystem and forwards them to the Counter in a way that breaks the link between the voter's identity and the submitted ballot.
+
+<Note>
+  The system does not rely on a trusted third party to enforce these guarantees. Each property is enforced by the cryptographic protocol itself, not by policy.
+</Note>
+
+## System roles
+
+Five distinct parties participate in the protocol. Understanding their responsibilities is key to operating the API correctly.
+
+| Role | Responsibility |
+|---|---|
+| **Voter** | Registers with an email address, receives N1 and N2 credentials by email, verifies N1, and submits an encrypted ballot |
+| **Commissioner** | Issues and validates N1 nonce credentials; the single authority that confirms a voter is eligible to cast a ballot |
+| **Administrator** | Manages the election lifecycle — starts voting, ends voting, and triggers the email distribution of credentials |
+| **Anonymizer** | Receives encrypted ballots from the VotingSystem and strips all identity metadata before forwarding them to the Counter |
+| **Counter** | Decrypts the anonymized ballots, tallies the results, and stores per-vote status records for individual verification |
+
+<Info>
+  Each role maps to a dedicated service class in the back-end: `CommissionerService`, `AdministratorService`, `AnonymizerService`, `CounterService`, and `VotingSystemService`. All five are wired together via FastAPI's dependency injection system in `app/dependencies.py`.
+</Info>

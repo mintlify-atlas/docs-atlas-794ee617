@@ -1,0 +1,98 @@
+---
+title: 'GET /results/tally — retrieve the vote count'
+description: 'Returns the current vote counts and percentages for all candidates. Only valid votes are included; rejected votes are excluded from all counts.'
+---
+
+Call this endpoint to read the current election results after the counting phase has run. The response contains the total number of valid votes processed and a per-candidate breakdown of counts and percentages. Only votes with a `valid` status are included — votes rejected due to an invalid signature or invalid N2 fingerprint are never counted. Results are populated by `POST /voting/end-vote`; the endpoint returns an empty tally until counting has occurred.
+
+## Request
+
+`GET /results/tally`
+
+This endpoint takes no request body and no query parameters.
+
+## Response
+
+<ResponseField name="total_votes" type="integer" required>
+  The total number of valid votes counted across all candidates.
+</ResponseField>
+
+<ResponseField name="tally" type="array" required>
+  A list of per-candidate result objects. Empty when no valid votes have been counted yet.
+
+  <Expandable title="CandidateResult properties">
+    <ResponseField name="candidate" type="string" required>
+      The candidate's name or identifier as recorded in the vote.
+    </ResponseField>
+
+    <ResponseField name="count" type="integer" required>
+      The number of valid votes cast for this candidate.
+    </ResponseField>
+
+    <ResponseField name="percentage" type="number" required>
+      This candidate's share of the total valid votes, expressed as a percentage (e.g. `60.0` means 60 %).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Tally returned successfully. The `tally` array may be empty if no valid votes have been counted yet. |
+| `500` | Internal server error while retrieving results. |
+
+## Response examples
+
+<Expandable title="200 — election in progress">
+
+```json
+{
+  "total_votes": 5,
+  "tally": [
+    {"candidate": "A", "count": 3, "percentage": 60.0},
+    {"candidate": "B", "count": 2, "percentage": 40.0}
+  ]
+}
+```
+
+</Expandable>
+
+<Expandable title="200 — no votes counted yet">
+
+```json
+{
+  "total_votes": 0,
+  "tally": []
+}
+```
+
+</Expandable>
+
+<Note>
+  Results are populated when `POST /voting/end-vote` is called. Once the election is closed and votes are counted, the tally is stable and read-only.
+</Note>
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl -X GET https://your-api/results/tally
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "total_votes": 5,
+  "tally": [
+    {"candidate": "A", "count": 3, "percentage": 60.0},
+    {"candidate": "B", "count": 2, "percentage": 40.0}
+  ]
+}
+```
+
+</ResponseExample>

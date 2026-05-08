@@ -1,0 +1,58 @@
+---
+title: 'GET /config/voting-system-config — fetch election settings'
+description: 'Retrieve the current election configuration, including the number of voters, the ballot question, and the list of candidate choices. No request body required.'
+---
+
+Call this endpoint to read the active election configuration stored in the database. The response contains the total voter count, the ballot question (vote theme), and the list of candidate or option names that will appear on each ballot. Use this data in your frontend to display the ballot to voters before they cast a vote. If no configuration row exists yet, the system automatically creates one with default values.
+
+## Request
+
+`GET /config/voting-system-config`
+
+This endpoint requires no request body and accepts no query parameters.
+
+## Response
+
+<ResponseField name="num_voters" type="integer" required>
+  The configured total number of voters allowed in this election.
+</ResponseField>
+
+<ResponseField name="vote_theme" type="string">
+  The ballot question or election topic shown to voters. May be `null` if not yet set.
+</ResponseField>
+
+<ResponseField name="choices" type="string[]">
+  The ordered list of candidate or option names. Up to 4 entries. May be `null` or an empty array if not yet configured.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Configuration returned successfully. |
+
+## Example
+
+<Note>
+  Retrieve this config to display the ballot options to voters in the frontend before the voting phase begins.
+</Note>
+
+<RequestExample>
+
+```bash cURL
+curl -X GET https://your-api/config/voting-system-config
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "num_voters": 100,
+  "vote_theme": "2024 Board Election",
+  "choices": ["Alice Johnson", "Bob Smith", "Carol White", "Dave Brown"]
+}
+```
+
+</ResponseExample>

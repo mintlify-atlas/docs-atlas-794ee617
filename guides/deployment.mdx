@@ -1,0 +1,139 @@
+---
+title: "Deploy the Crypto E-Voting API to production"
+description: "Provision a PostgreSQL database, set all required environment variables, apply Alembic migrations, and start the FastAPI server with Uvicorn."
+---
+
+A production deployment requires a PostgreSQL database and a Gmail OAuth2 application for sending credential emails. The API is a standard ASGI app served by Uvicorn, so it runs on any Linux host, container, or PaaS that can execute a Python process.
+
+<Steps>
+  <Step title="Install dependencies">
+    Install all Python packages from `requirements.txt` into your environment:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    Key packages and their roles:
+
+    | Package | Version | Role |
+    |---------|---------|------|
+    | `fastapi` | 0.135.2 | Web framework |
+    | `uvicorn` | 0.42.0 | ASGI server |
+    | `sqlalchemy` | 2.0.48 | ORM |
+    | `alembic` | 1.18.4 | Database migrations |
+    | `psycopg2-binary` | 2.9.11 | PostgreSQL driver |
+    | `cryptography` | 46.0.6 | RSA operations |
+    | `pydantic` | 2.12.5 | Request/response validation |
+    | `pydantic-settings` | 2.13.1 | Environment variable loading |
+    | `itsdangerous` | 2.2.0 | Signed session cookies |
+    | `google-api-python-client` | 2.193.0 | Gmail API client |
+    | `google-auth` | 2.49.1 | Gmail OAuth2 |
+    | `starlette` | 1.0.0 | Session middleware |
+    | `python-dotenv` | 1.2.2 | `.env` file loading |
+  </Step>
+
+  <Step title="Set environment variables">
+    The application reads its configuration from environment variables. Create a `.env.local` file (or export variables directly) with the following values:
+
+    ```bash
+    # Runtime environment: "development" or "production"
+    ENV=production
+
+    # Comma-separated list of allowed frontend origins
+    ALLOWED_ORIGINS=https://evoting.example.com,https://admin.example.com
+
+    # PostgreSQL connection string
+    DATABASE_URL=postgresql://user:password@localhost:5432/evoting
+
+    # Secret key for signing session cookies (generate a long random string)
+    SECRET_KEY=change-this-to-a-long-random-secret
+
+    # Gmail sender address
+    EMAIL_FROM=noreply@example.com
+
+    # Gmail OAuth2 credentials (from Google Cloud Console)
+    GMAIL_TOKEN=
+    GMAIL_REFRESH_TOKEN=your-refresh-token
+    GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
+    GMAIL_CLIENT_SECRET=your-client-secret
+    ```
+
+    All nine variables are required. The application will fail to start if any are missing.
+
+    | Variable | Description |
+    |----------|-------------|
+    | `ENV` | Runtime environment label (`development` or `production`). |
+    | `ALLOWED_ORIGINS` | Comma-separated list of frontend origins permitted by the CORS middleware. Must include every domain that will access the API. |
+    | `DATABASE_URL` | Full SQLAlchemy-compatible PostgreSQL connection string. |
+    | `SECRET_KEY` | Secret used to sign session cookies. Use a cryptographically random value of at least 32 characters. |
+    | `EMAIL_FROM` | The `From` address for credential emails sent via Gmail. |
+    | `GMAIL_TOKEN` | Access token (can be left blank; the application refreshes it automatically). |
+    | `GMAIL_REFRESH_TOKEN` | OAuth2 refresh token from your Gmail API credentials. |
+    | `GMAIL_CLIENT_ID` | OAuth2 client ID from Google Cloud Console. |
+    | `GMAIL_CLIENT_SECRET` | OAuth2 client secret from Google Cloud Console. |
+  </Step>
+
+  <Step title="Set up the database">
+    Run Alembic migrations to create all tables in the target database:
+
+    ```bash
+    alembic upgrade head
+    ```
+
+    This is idempotent — you can safely run it on each deployment to apply any new migrations.
+  </Step>
+
+  <Step title="Start the server">
+    Launch the API with Uvicorn:
+
+    ```bash
+    uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ```
+
+    For production, run with multiple workers and enable access logging:
+
+    ```bash
+    uvicorn app.main:app \
+      --host 0.0.0.0 \
+      --port 8000 \
+      --workers 4 \
+      --access-log
+    ```
+  </Step>
+
+  <Step title="Verify the deployment">
+    Confirm the API is running with the health check endpoints:
+
+    ```bash
+    curl https://your-api.example.com/health
+    ```
+
+    ```json
+    {"status": "ok"}
+    ```
+
+    ```bash
+    curl https://your-api.example.com/
+    ```
+
+    ```json
+    {"message": "API is running"}
+    ```
+
+    If either endpoint returns an error, check the server logs for missing environment variables or a failed database connection.
+  </Step>
+</Steps>
+
+## CORS
+
+The `ALLOWED_ORIGINS` variable controls which frontend origins the API accepts cross-origin requests from. The value is a comma-separated list parsed at startup:
+
+```bash
+ALLOWED_ORIGINS=https://evoting.example.com,https://admin.example.com
+```
+
+Every domain that hosts the voting frontend must appear in this list. Requests from any other origin will be blocked by the browser's same-origin policy.
+
+<Warning>
+  The session middleware uses `SameSite=None` cookies to preserve the voter's session between `POST /voters/check_n1` and `POST /voters/submit_vote`. Browsers only send `SameSite=None` cookies over HTTPS. **You must serve the API over HTTPS in production**, or voters will receive a `403` error when they try to submit their ballot because the session cookie will be dropped.
+</Warning>

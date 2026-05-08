@@ -1,0 +1,88 @@
+---
+title: "Configure the Crypto E-Voting API"
+description: "A complete reference for every environment variable the API reads at startup, including database, session, CORS, and Gmail OAuth settings."
+---
+
+The Crypto E-Voting API reads all runtime configuration from environment variables, loaded by Pydantic's `BaseSettings` from a file named `.env.local` in the project root. Every variable listed below is required at startup unless marked optional — the application will raise a validation error and refuse to start if any required value is missing.
+
+<Warning>
+  Never commit `.env.local`, `.env`, or any file containing real secrets to version control. Use your secret manager or CI/CD secrets store to inject values in production environments.
+</Warning>
+
+## Environment variables
+
+| Variable | Type | Required | Description |
+|---|---|---|---|
+| `ENV` | `string` | Yes | Runtime environment label. Accepted values: `development`, `testing`, `production`. Used to toggle environment-specific behaviour. |
+| `ALLOWED_ORIGINS` | `string` | Yes | Comma-separated list of frontend origins permitted by the CORS middleware. Example: `http://localhost:5173,https://app.example.com`. |
+| `DATABASE_URL` | `string` | Yes | SQLAlchemy-compatible PostgreSQL connection string. Example: `postgresql://user:password@localhost:5432/evoting`. |
+| `SECRET_KEY` | `string` | Yes | Secret used by Starlette's `SessionMiddleware` to sign and encrypt server-side session cookies. Must be a long, random string. |
+| `EMAIL_FROM` | `string` | Yes | The sender address that appears in credential emails delivered to voters. |
+| `GMAIL_TOKEN` | `string` | Yes | Short-lived Gmail OAuth 2.0 access token used to authenticate outbound email requests. |
+| `GMAIL_REFRESH_TOKEN` | `string` | Yes | Long-lived refresh token used to obtain a new `GMAIL_TOKEN` when the access token expires. |
+| `GMAIL_CLIENT_ID` | `string` | Yes | OAuth 2.0 client ID from the Google Cloud Console for the service account sending voter emails. |
+| `GMAIL_CLIENT_SECRET` | `string` | Yes | OAuth 2.0 client secret paired with `GMAIL_CLIENT_ID`. |
+
+## CORS configuration
+
+The `ALLOWED_ORIGINS` variable controls which browser origins can make cross-origin requests to the API. The middleware is configured with `allow_credentials=True`, which means session cookies are included in cross-origin requests — only explicitly listed origins are permitted.
+
+```bash
+# Single origin
+ALLOWED_ORIGINS=http://localhost:5173
+
+# Multiple origins, comma-separated
+ALLOWED_ORIGINS=http://localhost:5173,https://staging.example.com,https://app.example.com
+```
+
+The API splits this string on commas and trims whitespace from each entry before passing the list to FastAPI's `CORSMiddleware`. Wildcards (e.g. `*`) are not supported when `allow_credentials=True`.
+
+<Info>
+  The session cookie is set with `SameSite=None` and `Secure=True`, which requires the API to be served over HTTPS in production. Browsers will reject the cookie over plain HTTP with these settings.
+</Info>
+
+## Session configuration
+
+Server-side sessions are used to carry the voter's verified N1 nonce between the `POST /voters/check_n1` and `POST /voters/submit_vote` calls. Sessions are signed and encrypted using `SECRET_KEY` via Starlette's `SessionMiddleware`.
+
+Key session parameters set in `app/main.py`:
+
+| Parameter | Value | Description |
+|---|---|---|
+| `max_age` | `600` seconds | Sessions expire after 10 minutes of inactivity. A voter must complete N1 verification and vote submission within this window. |
+| `same_site` | `none` | Required for cross-origin cookie delivery when the front-end and API are on different domains. |
+| `https_only` | `true` | Instructs the browser to only send the session cookie over HTTPS connections. |
+
+<Warning>
+  If a voter's session expires between `POST /voters/check_n1` and `POST /voters/submit_vote`, the submission will return `403 Forbidden`. The voter must call `/voters/check_n1` again to restart their session.
+</Warning>
+
+## Gmail OAuth setup
+
+The API uses the Google Gmail API to send N1 and N2 credential emails to registered voters when `POST /voting/start-vote` is called. You need an OAuth 2.0 client configured in Google Cloud Console.
+
+To obtain the required credentials:
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+2. Enable the **Gmail API** for the project.
+3. Under **APIs & Services > Credentials**, create an **OAuth 2.0 Client ID** with application type **Web application** or **Desktop app**.
+4. Download the client credentials to get `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`.
+5. Complete the OAuth consent flow for your sender account to obtain `GMAIL_TOKEN` and `GMAIL_REFRESH_TOKEN`.
+
+<Note>
+  The access token in `GMAIL_TOKEN` expires after one hour. The application uses `GMAIL_REFRESH_TOKEN` to automatically obtain a new token. Make sure the refresh token is from a session authorized with the `https://mail.google.com/` scope so that the API can send email on behalf of `EMAIL_FROM`.
+</Note>
+
+## Example `.env.local`
+
+```bash
+ENV=development
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+DATABASE_URL=postgresql://evoting_user:strongpassword@localhost:5432/evoting_db
+SECRET_KEY=change-this-to-a-long-random-string-at-least-32-chars
+EMAIL_FROM=noreply@yourdomain.com
+GMAIL_TOKEN=ya29.a0AfH6SMB...
+GMAIL_REFRESH_TOKEN=1//0eXk...
+GMAIL_CLIENT_ID=123456789-abc.apps.googleusercontent.com
+GMAIL_CLIENT_SECRET=GOCSPX-abc123...
+```

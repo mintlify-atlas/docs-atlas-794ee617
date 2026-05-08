@@ -1,133 +1,55 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "Crypto E-Voting API: Privacy-preserving electronic voting"
+description: "FastAPI back-end for a cryptographic voting system using RSA blind signatures, nonce credentials, and an anonymizer pipeline to guarantee ballot secrecy."
 ---
 
-## Setting up
+The Crypto E-Voting API is a FastAPI-based back-end that powers a cryptographically secure electronic voting system. It combines RSA blind signatures, session-scoped nonce credentials (N1 and N2), and an anonymizer pipeline so that no single party — including the administrator — can link a voter's identity to their ballot.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Run the API locally and cast your first test vote in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="How it works" icon="shield-halved" href="/architecture/overview">
+    Understand the five-party protocol that keeps votes private
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API reference" icon="code" href="/api-reference/overview">
+    Explore every endpoint: voters, voting session, results, and config
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Guides" icon="book-open" href="/guides/voter-registration">
+    Step-by-step workflows for registration, casting votes, and tallying results
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How the voting flow works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Register voters">
+    Submit each voter's email address via `POST /voters/register`. The system stores it and waits for the election to start.
+  </Step>
+  <Step title="Start the election">
+    Call `POST /voting/start-vote`. The server generates unique N1 and N2 nonces for every voter and delivers them by email. The voting phase begins.
+  </Step>
+  <Step title="Cast a ballot">
+    Each voter verifies their N1 code with `POST /voters/check_n1`, then submits their encrypted ballot with `POST /voters/submit_vote`. The RSA blind-signature protocol hides their identity from the counter.
+  </Step>
+  <Step title="Tally and verify">
+    Call `POST /voting/end-vote` to decrypt and count all ballots. Anyone can then check `GET /results/tally` for totals, and individual voters can confirm their vote was counted with `POST /results/verify-vote`.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Key guarantees
 
-## Make your content agent ready
-
-Make your docs work for humans and AI agents alike.
-
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
+<CardGroup cols={2}>
+  <Card title="Ballot secrecy" icon="eye-slash">
+    RSA blind signatures ensure the administrator signs ballots without ever seeing their content
   </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
+  <Card title="Double-vote prevention" icon="lock">
+    Session-scoped N1 verification is consumed on first use, preventing replay attacks
   </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
+  <Card title="Individual verifiability" icon="magnifying-glass">
+    Every voter can confirm their vote was received and counted using their N2 fingerprint
   </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
+  <Card title="Anonymized ballots" icon="user-secret">
+    The anonymizer pipeline decouples voter identity from submitted encrypted ballots
   </Card>
-</Columns>
-
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+</CardGroup>

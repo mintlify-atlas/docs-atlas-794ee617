@@ -1,0 +1,86 @@
+---
+title: 'PATCH /config/voting-system-config — update settings'
+description: 'PATCH /config/voting-system-config — partial update of election settings. Only provided fields change; num_voters, vote_theme, and choices are optional.'
+---
+
+Use this endpoint to partially update the election configuration before the election opens. Because it follows HTTP PATCH semantics, you only send the fields you want to change — the server merges your updates into the existing record and leaves every other field untouched. You can update the voter count, the ballot question, the candidate list, or any combination of the three in a single request.
+
+<Info>
+  PATCH only modifies the fields you provide. Any field you omit in the request body remains unchanged in the database.
+</Info>
+
+<Warning>
+  Update the configuration before starting the election. Making changes after calling the start-vote endpoint may cause inconsistencies between the stored config and ballots already issued to voters.
+</Warning>
+
+## Request
+
+`PATCH /config/voting-system-config`
+
+### Body
+
+All fields are optional. Include only the fields you want to update.
+
+<ParamField body="num_voters" type="integer">
+  Update the total number of voters allowed in this election.
+</ParamField>
+
+<ParamField body="vote_theme" type="string">
+  Update the ballot question or election topic shown to voters.
+</ParamField>
+
+<ParamField body="choices" type="string[]">
+  Replace the full list of candidate or option names. Provide all desired choices — this field overwrites the existing list.
+</ParamField>
+
+## Response
+
+The endpoint returns the full updated configuration record.
+
+<ResponseField name="num_voters" type="integer" required>
+  The configured total number of voters after the update.
+</ResponseField>
+
+<ResponseField name="vote_theme" type="string">
+  The ballot question or election topic after the update.
+</ResponseField>
+
+<ResponseField name="choices" type="string[]">
+  The complete list of candidate or option names after the update.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Configuration updated successfully. Returns the full updated config. |
+
+## Examples
+
+<RequestExample>
+
+```bash Update the vote theme
+curl -X PATCH https://your-api/config/voting-system-config \
+  -H "Content-Type: application/json" \
+  -d '{"vote_theme": "2025 Annual General Meeting"}'
+```
+
+```bash Update the choices list
+curl -X PATCH https://your-api/config/voting-system-config \
+  -H "Content-Type: application/json" \
+  -d '{"choices": ["Option A", "Option B", "Option C"]}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "num_voters": 100,
+  "vote_theme": "2025 Annual General Meeting",
+  "choices": ["Option A", "Option B", "Option C"]
+}
+```
+
+</ResponseExample>

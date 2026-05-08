@@ -1,0 +1,83 @@
+---
+title: 'POST /voting/start-vote — begin the election'
+description: 'POST /voting/start-vote — begins the election by generating N1/N2 credentials and emailing them to every registered voter. Transitions status to vote_started.'
+---
+
+Calling this endpoint kicks off the election. The server fetches every registered voter from the database, generates a cryptographically random N1 and N2 nonce pair for each one, emails those credentials to each voter via the Gmail API, and then marks the election status as `vote_started`. The operation is idempotent with respect to duplicate sends: an internal `emails_sent` flag prevents the voter watcher from re-sending credentials if the server restarts between calls.
+
+## Request
+
+```bash
+POST /voting/start-vote
+```
+
+No request body is required.
+
+<Warning>
+  This endpoint immediately sends credential emails to every voter currently in the database. Ensure all voters are registered before calling it — you cannot un-send emails, and any voter added after this call will not receive credentials.
+</Warning>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  Always `"success"` on a 200 response.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable summary including the number of voters who received credentials, e.g. `"Voting started. Credentials sent to 42 voters."`.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "status": "success",
+  "message": "Voting started. Credentials sent to 42 voters."
+}
+```
+
+## HTTP status codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `200` | Election started successfully; credential emails dispatched to all voters. |
+| `404` | No voters are registered in the database. Register voters before starting the election. |
+| `500` | An unexpected error occurred while starting the vote, e.g. a Gmail API failure. |
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl --request POST \
+  --url https://your-api-host/voting/start-vote
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "success",
+  "message": "Voting started. Credentials sent to 42 voters."
+}
+```
+
+```json 404
+{
+  "detail": "No voters found"
+}
+```
+
+```json 500
+{
+  "detail": "Error starting vote: <error details>"
+}
+```
+
+</ResponseExample>
+
+<Note>
+  If the server restarts after credentials have already been sent, calling this endpoint again is safe. The `emails_sent` flag in the voting configuration prevents the voter watcher from dispatching duplicate emails.
+</Note>

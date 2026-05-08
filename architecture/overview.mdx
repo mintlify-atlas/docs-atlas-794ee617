@@ -1,0 +1,97 @@
+---
+title: "System architecture: five-party voting protocol"
+description: "How the Crypto E-Voting API separates concerns across five parties — Voter, Commissioner, Administrator, Anonymizer, and Counter — to guarantee ballot secrecy."
+---
+
+The Crypto E-Voting API is built around a five-party protocol where each party holds a distinct role and no single party ever possesses enough information to compromise ballot secrecy. The FastAPI application exposes four router groups (`voters`, `voting`, `results`, `config`) backed by five service classes that coordinate RSA blind signatures, nonce-based authentication, and an anonymizer pipeline to decouple voter identity from cast ballots.
+
+## The five parties
+
+<CardGroup cols={2}>
+  <Card title="Voter" icon="user">
+    Registers with an email address, receives N1 and N2 credentials, blinds their ballot, and submits the encrypted result. The voter never shares their raw vote with any party that also knows their identity.
+  </Card>
+  <Card title="Commissioner" icon="id-badge">
+    Manages the credential store. Validates that an N1 code exists before a ballot is accepted, and verifies that an N2 hash was legitimately issued before a counted vote is accepted as valid. Implemented in `CommissionerService`.
+  </Card>
+  <Card title="Administrator" icon="key">
+    Holds the RSA private key used to blind-sign ballots. The administrator signs masked (blinded) ballots using `sign_masked_ballot`, so it never sees the plaintext vote. Implemented in `AdministratorService`.
+  </Card>
+  <Card title="Anonymizer" icon="user-secret">
+    Acts as the submission gateway. Validates the voter's N1 credential (consuming it on first use) and stores the encrypted ballot. When all expected votes are received it automatically triggers the counter. Implemented in `AnonymizerService`.
+  </Card>
+  <Card title="Counter" icon="calculator">
+    Decrypts all collected ballots with the counter's RSA private key, verifies each ballot's administrator signature, checks each N2 fingerprint with the commissioner, and records a `CountedVote` with a status of `VALID`, `INVALID_SIGNATURE`, or `INVALID_N2`. Implemented in `CounterService`.
+  </Card>
+</CardGroup>
+
+<Info>
+  No single party can link a voter's identity to their ballot. The administrator signs without seeing content; the anonymizer submits without knowing the vote; the counter decrypts without knowing who submitted.
+</Info>
+
+## Request flow
+
+<Steps>
+  <Step title="Voter registration">
+    The administrator calls `POST /voters/register` with a list of email addresses. The API stores each email in the `voters` table and waits for the election to open.
+  </Step>
+  <Step title="Election start and credential delivery">
+    Calling `POST /voting/start-vote` transitions the `voting_config` record to `VOTE_STARTED`. The system generates a unique N1 nonce and N2 nonce for every registered voter. N1 is stored as plaintext; N2 is stored only as its SHA-256 hash (`hash_n2`). Both are delivered to the voter by email.
+  </Step>
+  <Step title="N1 verification">
+    The voter calls `POST /voters/check_n1` with their N1 code. `CommissionerService.is_n1_exist` confirms the code is present in the `credentials` table. This step does not yet consume the credential.
+  </Step>
+  <Step title="Blind ballot creation">
+    The voter's client creates a `VoterBallotDTO(vote, n2, random_bits)`, converts it to a big-endian integer, and blinds it with the administrator's RSA public key: `m' = m * k^e mod N`. The blinding factor `k` is kept client-side.
+  </Step>
+  <Step title="Blind signature">
+    The masked ballot is sent to the administrator endpoint. `AdministratorService.sign_masked_ballot` applies `s' = (m')^d mod N` and returns the signed masked value without ever seeing the original ballot.
+  </Step>
+  <Step title="Unblinding">
+    The voter's client removes the blinding factor: `s = s' * k⁻¹ mod N`. The result `s` is a valid RSA signature on the original ballot verifiable by anyone with the administrator's public key.
+  </Step>
+  <Step title="Ballot encryption and submission">
+    The signed ballot is encrypted with the counter's public key: `c = s^e mod N`. The voter then calls `POST /voters/submit_vote` with their N2 code and vote choice. The server reads N1 from the session automatically. `AnonymizerService.anonymize_and_submit_vote` validates and consumes N1 (removing it from the credential store), then writes the encrypted vote to the `votes` table.
+  </Step>
+  <Step title="Automatic tally">
+    When the number of submitted votes reaches `num_voters` (configured in `voting_config`), the anonymizer automatically invokes `CounterService.finalize_voting`. The counter decrypts, verifies, and tallies all ballots in a single pass, writing each result to `counted_votes` and transitioning the system to `VOTE_ENDED`.
+  </Step>
+  <Step title="Results and individual verification">
+    Anyone can call `GET /results/tally` to read the final tally. Individual voters can confirm their ballot was counted by calling `POST /results/verify-vote` with their N2 code.
+  </Step>
+</Steps>
+
+## Component diagram
+
+The five service classes are wired together at dependency-injection time. Here is how they reference each other:
+
+1. **`CommissionerService`** — standalone; owns the `credentials` table via `credentials_repository`.
+2. **`AdministratorService`** — depends on `CommissionerService` to validate N1 before signing.
+3. **`CounterService`** — depends on `AdministratorService` (for signature verification) and `CommissionerService` (for N2 hash checks).
+4. **`AnonymizerService`** — depends on `CommissionerService` (N1 validation) and `CounterService` (to trigger tally).
+5. **`VotingSystemService`** — orchestrates `AdministratorService`, `AnonymizerService`, and `CounterService` into the full blind-signature submission workflow called by the voter-facing router.
+
+<Note>
+  `VotingSystemService` is the only class the voting router calls directly. All cryptographic steps — blinding, signing, unblinding, encrypting — happen inside `get_blind_signed_ballot` and `get_encrypted_signed_ballot`, keeping the router thin.
+</Note>
+
+## Key design decisions
+
+### Why RSA blind signatures?
+
+Blind signatures allow the administrator to certify that a ballot is legitimate (i.e., the voter held valid credentials) without learning what the ballot contains. The administrator's signature proves authenticity; the blinding guarantees secrecy. Without blinding, the administrator could record which candidate each voter chose.
+
+### How anonymization works
+
+The anonymizer sits between the voter and the ballot store. It validates the voter's N1 credential and then discards the association — the `votes` table row contains only the encrypted ciphertext and a timestamp, with no reference to the voter's identity or email. The link between "who voted" (N1) and "what was voted" (encrypted ballot) is permanently severed at submission time.
+
+### Why the N1 + N2 scheme prevents double voting
+
+Two independent controls work together:
+
+- **N1** is consumed (deleted or marked used) the moment a ballot is submitted. A second submission attempt with the same N1 is rejected by `AnonymizerService.check_n1`.
+- **N2** is stored as a SHA-256 hash in the credential record. At counting time, the counter re-derives the hash and asks the commissioner whether it exists. A ballot carrying an N2 value that was never issued by the system (or that was already counted) is rejected with status `INVALID_N2`.
+
+<Warning>
+  N2 is a voter's receipt — they must keep it private. Anyone who obtains a voter's N2 before tallying can potentially submit a fraudulent ballot that passes the N2 hash check. The protocol relies on N2 remaining confidential between the voter and the commissioner until counting time.
+</Warning>

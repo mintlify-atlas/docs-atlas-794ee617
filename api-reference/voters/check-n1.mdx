@@ -1,0 +1,76 @@
+---
+title: "POST /voters/check_n1 — validate a voter's N1 code"
+description: "Verify a voter's one-time N1 nonce against the commissioner service. On success the code is stored in the session for use by submit_vote."
+---
+
+N1 is the first one-time nonce sent to the voter's credential email. Before you can submit a ballot you must validate N1 with this endpoint. The commissioner service checks whether the code is known and, if it is, the server stores it in the caller's session automatically — you do not need to include N1 again when you call `submit_vote`. The session window is 10 minutes.
+
+<Warning>
+  You must call this endpoint successfully **before** calling `/voters/submit_vote`. If the session expires before you submit your vote, call `/voters/check_n1` again to refresh it. Attempting to submit a vote without a valid session N1 will return a `403`.
+</Warning>
+
+## Request
+
+`POST /voters/check_n1`
+
+### Body
+
+<ParamField body="n1" type="string" required>
+  The N1 nonce from the voter's credential email. This value is checked against the commissioner's records.
+</ParamField>
+
+## Response
+
+<ResponseField name="is_N1_exist" type="boolean" required>
+  `true` if the N1 code was recognised by the commissioner and has been stored in the session for the upcoming vote submission. `false` if the code is unknown or invalid.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Check completed. Inspect `is_N1_exist` to determine whether the code was accepted. |
+| `500` | Unexpected error communicating with the commissioner service. |
+
+<Expandable title="200 — valid N1">
+
+```json
+{
+  "is_N1_exist": true
+}
+```
+
+</Expandable>
+
+<Expandable title="200 — invalid N1">
+
+```json
+{
+  "is_N1_exist": false
+}
+```
+
+</Expandable>
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://your-api/voters/check_n1 \
+  -H "Content-Type: application/json" \
+  -c cookies.txt -b cookies.txt \
+  -d '{"n1": "a1b2c3d4e5f6..."}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "is_N1_exist": true
+}
+```
+
+</ResponseExample>

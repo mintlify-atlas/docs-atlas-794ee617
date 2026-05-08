@@ -1,0 +1,110 @@
+---
+title: "Manage the election lifecycle"
+description: "Move the election through its three phases — registration, voting, and tallying — using the voting session and configuration endpoints."
+---
+
+Every election moves through three states in order: `register`, `vote_started`, and `vote_ended`. During `register` you add voters and configure the ballot. When you start the vote, credential emails go out immediately and voting opens. When you end the vote, all ballots are decrypted, verified, and tallied. Each transition is one-way — there is no rollback.
+
+## Check current status
+
+Before taking any action, confirm which phase the election is in.
+
+```bash
+curl https://your-api.example.com/voting/vote-status
+```
+
+```json
+{
+  "voting_status": "register"
+}
+```
+
+The three possible values are:
+
+| Status | Meaning |
+|--------|---------|
+| `register` | Voters can be registered. Voting has not started. |
+| `vote_started` | Credential emails have been sent. Voters can cast ballots. |
+| `vote_ended` | Voting is closed. Results have been tallied. |
+
+## Update election configuration
+
+Before starting the vote, set the ballot question and candidate choices using `PATCH /config/voting-system-config`. Only the fields you include are updated.
+
+```bash
+curl -X PATCH https://your-api.example.com/config/voting-system-config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vote_theme": "Board of Directors Election 2026",
+    "choices": ["Alice Martin", "Bob Chen", "Carol Osei", "David Reyes"]
+  }'
+```
+
+```json
+{
+  "num_voters": 0,
+  "vote_theme": "Board of Directors Election 2026",
+  "choices": ["Alice Martin", "Bob Chen", "Carol Osei", "David Reyes"]
+}
+```
+
+You can also fetch the current configuration at any time:
+
+```bash
+curl https://your-api.example.com/config/voting-system-config
+```
+
+## Start the election
+
+`POST /voting/start-vote` transitions the election from `register` to `vote_started` and immediately sends a credential email to every registered voter.
+
+```bash
+curl -X POST https://your-api.example.com/voting/start-vote
+```
+
+```json
+{
+  "status": "success",
+  "message": "Voting started. Credentials sent to 42 voters."
+}
+```
+
+<Warning>
+  Emails are sent the moment you call this endpoint. Ensure every voter is registered and their email address is correct before starting. There is no way to add voters or resend credentials after this point.
+</Warning>
+
+If no voters are registered when you call this endpoint, the API returns `404`:
+
+```json
+{
+  "detail": "No voters found"
+}
+```
+
+## End the election and tally results
+
+`POST /voting/end-vote` closes voting and triggers the full counting pipeline: all encrypted ballots are retrieved from the anonymizer, decrypted with the counter's private key, their signatures and N2 hashes are verified, and a tally is computed.
+
+```bash
+curl -X POST https://your-api.example.com/voting/end-vote
+```
+
+```json
+{
+  "status": "success",
+  "message": "Votes counted successfully",
+  "results": {
+    "valid": 38,
+    "invalid_signature": 0,
+    "invalid_n2": 2,
+    "tally": {
+      "Alice Martin": 14,
+      "Bob Chen": 12,
+      "Carol Osei": 8,
+      "David Reyes": 4
+    }
+  }
+}
+```
+
+After this call, the full tally is also available at `GET /results/tally` and individual voters can verify their ballots at `POST /results/verify-vote`.

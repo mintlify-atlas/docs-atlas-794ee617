@@ -1,0 +1,98 @@
+---
+title: "Cast a ballot in the cryptographic voting system"
+description: "Step-by-step guide to casting a ballot: verify your N1 code with check_n1 to open a session, then submit your encrypted vote using your N2 fingerprint."
+---
+
+When the election starts, you receive an email containing two codes: **N1** and **N2**. N1 is a one-time authentication token that proves you are an eligible voter. N2 is your personal fingerprint that links your ballot to you for later verification — without revealing how you voted to anyone else. Casting a vote is a two-step process: verify N1 to open a session, then submit your ballot.
+
+## Prerequisites
+
+- Your email address must have been registered during the registration phase.
+- The election must be in the `vote_started` state (`GET /voting/vote-status`).
+- You must have your N1 and N2 codes from the credential email.
+
+<Steps>
+  <Step title="Verify your N1 code">
+    Send your N1 code to `POST /voters/check_n1`. This validates your eligibility and stores the verified N1 in your server-side session for the next step.
+
+    ```bash
+    curl -X POST https://your-api.example.com/voters/check_n1 \
+      -H "Content-Type: application/json" \
+      -c cookies.txt \
+      -d '{"n1": "AF15GH258ZQP"}'
+    ```
+
+    If your N1 code is valid, you receive:
+
+    ```json
+    {
+      "is_N1_exist": true
+    }
+    ```
+
+    If the code is not found (already used or incorrect), you receive:
+
+    ```json
+    {
+      "is_N1_exist": false
+    }
+    ```
+
+    When `is_N1_exist` is `false`, do not proceed to the next step. Check that you copied the N1 code exactly as it appeared in the credential email.
+  </Step>
+
+  <Step title="Submit your encrypted ballot">
+    Send your vote to `POST /voters/submit_vote` in the same session (using the same cookie). Provide your N2 code and your vote choice.
+
+    ```bash
+    curl -X POST https://your-api.example.com/voters/submit_vote \
+      -H "Content-Type: application/json" \
+      -b cookies.txt \
+      -d '{"n2": "B3KZ9MX471WR", "vote": "Candidate A"}'
+    ```
+
+    A successful submission returns:
+
+    ```json
+    {
+      "status": "success",
+      "message": "Vote submitted successfully and sent to anonymizer"
+    }
+    ```
+
+    **Error responses:**
+
+    | Status | Reason |
+    |--------|--------|
+    | `403` | N1 not verified — call `POST /voters/check_n1` first, or the session expired |
+    | `400` | Invalid N2 format or unrecognised vote choice |
+    | `500` | Unexpected server error during ballot processing |
+  </Step>
+</Steps>
+
+<Warning>
+  **N1 is consumed after first verification.** Once `check_n1` succeeds and you submit your vote, the N1 code is invalidated. You cannot vote a second time with the same credentials. Sessions expire after 10 minutes — if you wait too long between `check_n1` and `submit_vote`, you will receive a `403` and must start again with a fresh session (but N1 can only be verified once, so double-voting is impossible).
+</Warning>
+
+## Ballot fields
+
+The `POST /voters/submit_vote` request body accepts two fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `n2` | string | Your unique N2 fingerprint from the credential email. Used to link the ballot back to you for verification. |
+| `vote` | string | Your vote choice. Must match one of the configured election choices exactly. |
+
+## How privacy is protected
+
+The system uses an RSA blind signature scheme so that the administrator can confirm your eligibility without ever seeing which candidate you chose.
+
+When you call `submit_vote`, the server:
+
+1. Takes your vote and N2 and wraps them into a ballot object together with random bits (to prevent replay attacks).
+2. **Blinds** the ballot — multiplies it by a random masking factor using the administrator's public key, so the ballot is unreadable.
+3. Sends the blinded ballot to the administrator service, which signs it without seeing the original content.
+4. **Removes the masking factor** from the signature mathematically, producing a valid signature on the original ballot — a signature the administrator unknowingly produced.
+5. Encrypts the signed ballot with the vote counter's public key and forwards it to the anonymizer service.
+
+The anonymizer strips the N1 token before forwarding to the counter, so the counter sees ballots that are signed (proving eligibility) but not linked to individual voters. When the election ends, the counter decrypts every ballot, verifies the signature and the N2 hash, and tallies the results.

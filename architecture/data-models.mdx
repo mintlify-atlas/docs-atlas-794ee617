@@ -1,0 +1,233 @@
+---
+title: "Database schema and data models"
+description: "SQLAlchemy ORM models, table schemas, column definitions, enum states, and the vote lifecycle from encrypted submission through final tally."
+---
+
+The Crypto E-Voting API persists all state in a PostgreSQL database managed by SQLAlchemy and Alembic. Five ORM models map to five tables. At startup, `Base.metadata.create_all(bind=engine)` ensures the tables exist before the application begins accepting requests. This page documents every table, its columns, the enumerations that govern state, and the path a vote travels from submission to final count.
+
+## `voters` table
+
+The `voters` table is a simple registry of eligible email addresses. It has no relationship columns — voter identity is intentionally decoupled from all other tables to prevent any linkage between an email address and a cast ballot.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `Integer` | Primary key, indexed | Auto-incremented row identifier |
+| `email` | `String` | Not null, unique | Voter's email address; used for credential delivery only |
+
+<AccordionGroup>
+  <Accordion title="Voter model source">
+    ```python
+    from sqlalchemy import Column, Integer, String
+    from app.database import Base
+
+    class Voter(Base):
+        __tablename__ = "voters"
+
+        id = Column(Integer, primary_key=True, index=True)
+        email = Column(String, nullable=False, unique=True)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## `credentials` table
+
+The `credentials` table stores the one-time authentication tokens issued to each voter when the election opens. N1 is stored as plaintext so it can be validated by direct lookup. N2 is stored only as a SHA-256 hex digest — the plaintext value is never written to the database.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `Integer` | Primary key, indexed | Auto-incremented row identifier |
+| `n1` | `String` | Not null, unique | Plaintext one-time submission token; consumed (deleted or flagged) on first use |
+| `hash_n2` | `String` | Not null, unique | SHA-256 hex digest of the voter's N2 receipt nonce |
+| `used` | `Boolean` | Not null, default `False` | Tracks whether the credential has been exercised |
+
+<Note>
+  The uniqueness constraint on `hash_n2` also acts as a collision guard: two voters cannot share the same N2 fingerprint, so every ballot carries a distinct cryptographic identity.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="Credential model source">
+    ```python
+    from sqlalchemy import Column, Integer, String, Boolean
+    from app.database import Base
+
+    class Credential(Base):
+        __tablename__ = "credentials"
+
+        id = Column(Integer, primary_key=True, index=True)
+        n1 = Column(String, nullable=False, unique=True)
+        hash_n2 = Column(String, nullable=False, unique=True)
+        used = Column(Boolean, default=False, nullable=False)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## `votes` table
+
+The `votes` table holds submitted ballots in their encrypted form. No voter identifier or N1/N2 value appears in this table — the anonymizer severs the link between identity and ciphertext before writing the row.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `Integer` | Primary key, indexed | Auto-incremented row identifier |
+| `encrypted_vote` | `String` | Not null | RSA ciphertext: `c = s^e mod N` using the counter's public key |
+| `submitted_at` | `DateTime` | Default `utcnow` | UTC timestamp of ballot receipt |
+| `status` | `Enum(VoteStatus)` | Not null, default `VALID` | Submission-level status flag |
+
+### `VoteStatus` enum
+
+| Value | Meaning |
+|-------|---------|
+| `VALID` | Ballot was accepted and stored for counting |
+| `REJECTED` | Ballot was rejected at submission time (e.g. N1 invalid) |
+
+<AccordionGroup>
+  <Accordion title="Vote model source">
+    ```python
+    from sqlalchemy import Column, Integer, String, DateTime, Enum
+    import enum
+    from datetime import datetime
+    from app.database import Base
+
+    class VoteStatus(enum.Enum):
+        VALID = "valid"
+        REJECTED = "rejected"
+
+    class Vote(Base):
+        __tablename__ = "votes"
+
+        id = Column(Integer, primary_key=True, index=True)
+        encrypted_vote = Column(String, nullable=False)
+        submitted_at = Column(DateTime, default=datetime.utcnow)
+        status = Column(Enum(VoteStatus), default=VoteStatus.VALID, nullable=False)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## `counted_votes` table
+
+The `counted_votes` table is populated by `CounterService.process_all_votes` during the tally phase. Each row corresponds to one decrypted, verified ballot and carries the outcome of both verification checks.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `Integer` | Primary key, indexed | Auto-incremented row identifier |
+| `hash_n2` | `String` | Not null, unique | SHA-256 hash of the N2 extracted from the decrypted ballot |
+| `vote` | `String` | Not null | The candidate or option string recovered from the ballot |
+| `status` | `Enum(CountedVoteStatus)` | Not null | Outcome of signature and N2 verification checks |
+
+### `CountedVoteStatus` enum
+
+| Value | Meaning |
+|-------|---------|
+| `VALID` | Both the administrator's signature and the N2 hash check passed |
+| `INVALID_SIGNATURE` | RSA verification of the administrator's signature failed; `n2` and `vote` are set to `"unknown"` |
+| `INVALID_N2` | Signature was valid but the N2 value was not found in the commissioner's credential store |
+
+<AccordionGroup>
+  <Accordion title="CountedVote model source">
+    ```python
+    from sqlalchemy import Column, Integer, String, Enum
+    import enum
+    from app.database import Base
+
+    class CountedVoteStatus(enum.Enum):
+        VALID = "valid"
+        INVALID_SIGNATURE = "invalid_signature"
+        INVALID_N2 = "invalid_n2"
+
+    class CountedVote(Base):
+        __tablename__ = "counted_votes"
+
+        id = Column(Integer, primary_key=True, index=True)
+        hash_n2 = Column(String, nullable=False, unique=True)
+        vote = Column(String, nullable=False)
+        status = Column(Enum(CountedVoteStatus), nullable=False)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## `voting_config` table
+
+The `voting_config` table holds a single configuration record that governs the election's current phase and parameters. It is read and updated by the voting system config router.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `Integer` | Primary key | Row identifier (only one row is expected) |
+| `emails_sent` | `Boolean` | Default `False` | Whether credential emails have been dispatched to voters |
+| `num_voters` | `Integer` | Default `5` | Expected total number of ballots; triggers automatic tally when reached |
+| `vote_theme` | `String` | Nullable | Human-readable description of what voters are choosing |
+| `choices` | `JSON` | Nullable, default `[]` | Ordered list of valid vote choices, e.g. `["Candidate A", "Candidate B"]` |
+| `voting_status` | `Enum(VotingStatus)` | Not null, default `REGISTER` | Current phase of the election lifecycle |
+
+### `VotingStatus` enum
+
+| Value | Meaning |
+|-------|---------|
+| `REGISTER` | The election is in setup. Voters can be registered; ballots are not yet accepted. |
+| `VOTE_STARTED` | The election is open. Credentials have been distributed; ballots are accepted. |
+| `VOTE_ENDED` | The election is closed. Ballots have been counted; results are readable. |
+
+<AccordionGroup>
+  <Accordion title="VotingConfigModel source">
+    ```python
+    from sqlalchemy import Column, Boolean, Integer, String, Enum
+    from sqlalchemy.types import JSON
+    from app.database import Base
+    import enum
+
+    class VotingStatus(enum.Enum):
+        REGISTER = "register"
+        VOTE_STARTED = "vote_started"
+        VOTE_ENDED = "vote_ended"
+
+    class VotingConfigModel(Base):
+        __tablename__ = "voting_config"
+
+        id = Column(Integer, primary_key=True)
+        emails_sent = Column(Boolean, default=False)
+        num_voters = Column(Integer, default=5)
+        vote_theme = Column(String, nullable=True)
+        choices = Column(JSON, nullable=True, default=[])
+        voting_status = Column(Enum(VotingStatus), default=VotingStatus.REGISTER, nullable=False)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Vote lifecycle
+
+A ballot moves through two tables and several status values between submission and final count.
+
+<Steps>
+  <Step title="Submission — votes table, status VALID">
+    The voter submits an encrypted ciphertext via `POST /voters/submit_vote`. `AnonymizerService.anonymize_and_submit_vote` validates and consumes the voter's N1, then calls `submit_encrypted_vote`, which writes a new row to `votes` with `status = VALID` and a UTC timestamp.
+  </Step>
+  <Step title="Threshold check">
+    After each insertion, `has_reached_vote_limit` compares the row count of `votes` against `voting_config.num_voters`. When they match, the anonymizer calls `CounterService.finalize_voting` automatically — no manual intervention is required.
+  </Step>
+  <Step title="Decryption — counter's private key">
+    `CounterService.decrypt_all_votes` reads every `encrypted_vote` string, converts it to an integer, and applies `m = c^d mod N` using the counter's RSA private exponent. The resulting list of integers is held in memory for verification.
+  </Step>
+  <Step title="Signature check — counted_votes table">
+    `verify_signature` applies the administrator's public key to each decrypted integer and attempts to recover a three-part ballot string. Failure → `CountedVoteStatus.INVALID_SIGNATURE` row in `counted_votes` with `vote = "unknown"` and `n2 = "unknown"`.
+  </Step>
+  <Step title="N2 fingerprint check">
+    For ballots that pass signature verification, the extracted N2 string is hashed and checked against `credentials.hash_n2`. Failure → `CountedVoteStatus.INVALID_N2` row. Success → `CountedVoteStatus.VALID` row, and the vote string is added to the tally.
+  </Step>
+  <Step title="Finalisation — voting_config status VOTE_ENDED">
+    Once all ballots are processed, `set_voting_ended` updates `voting_config.voting_status` to `VOTE_ENDED`. The `GET /results/tally` endpoint then reads `counted_votes` to return per-candidate totals.
+  </Step>
+</Steps>
+
+## Voting status states
+
+The `VotingStatus` enum on `voting_config` acts as a state machine that controls which API operations are permitted at any given time.
+
+```
+REGISTER ──► VOTE_STARTED ──► VOTE_ENDED
+```
+
+- **`REGISTER`** — the default state after initialisation. The admin can register voters and configure the election (theme, choices, voter count) but ballots are not yet accepted.
+- **`VOTE_STARTED`** — set when `POST /voting/start-vote` is called. Credential emails are sent and the voting endpoints open. Transitioning into this state is irreversible in normal operation.
+- **`VOTE_ENDED`** — set automatically when the last expected ballot is processed, or manually via `POST /voting/end-vote`. Results become readable and `finalize_voting` refuses to run again if called a second time.
+
+<Warning>
+  Once `voting_status` transitions to `VOTE_ENDED`, `CounterService.finalize_voting` returns immediately with `{"message": "Voting already finalized"}` to prevent double-counting. There is no rollback path in the current implementation.
+</Warning>

@@ -1,0 +1,55 @@
+---
+title: 'API error codes and HTTP status reference'
+description: 'HTTP status codes used by the Crypto E-Voting API — 200 through 500 — with causes, error response format, and resolution steps for common scenarios.'
+---
+
+All error responses from the Crypto E-Voting API follow FastAPI's standard JSON error format. When a request fails, the response body contains a `detail` field that describes what went wrong. You can use this field to handle errors programmatically or surface a message to the user.
+
+## Error response format
+
+Every error response from the API uses this structure:
+
+```json
+{"detail": "Error message here"}
+```
+
+For example, attempting to submit a vote without completing the N1 verification step returns:
+
+```json
+{"detail": "N1 not verified. Please verify your N1 first."}
+```
+
+Some endpoints — such as `POST /voters/register` — return a custom response body even for error cases. In those cases, the body follows the endpoint's own response schema rather than the standard `detail` format.
+
+## HTTP status codes
+
+The table below documents every HTTP status code used across the API and what it means in this system.
+
+| Status | Meaning in this API |
+|--------|---------------------|
+| `200 OK` | The request succeeded. The response body contains the requested data or a confirmation message. |
+| `201 Created` | A new voter was registered successfully (only returned by `POST /voters/register`). |
+| `400 Bad Request` | The request contained invalid input — for example, a malformed N2 fingerprint, an unrecognised vote choice, or a failed registration due to a DB error. |
+| `403 Forbidden` | The N1 code is not present in the session. You must call `POST /voters/check_n1` before calling `POST /voters/submit_vote`. |
+| `404 Not Found` | The requested resource does not exist — for example, no voters are registered when starting a vote, or the voting configuration record is missing. |
+| `409 Conflict` | The email address is already registered in the system. Each email can only be registered once. |
+| `500 Internal Server Error` | An unexpected error occurred on the server. These are not caused by invalid input — check server logs for details. |
+
+## Common error scenarios
+
+The table below lists the most common error situations, where they occur, and how to resolve them.
+
+| Scenario | Endpoint | Status | Resolution |
+|----------|----------|--------|------------|
+| Submitting a vote without verifying N1 first | `POST /voters/submit_vote` | `403` | Call `POST /voters/check_n1` with a valid N1 code first, then retry the vote submission within the 10-minute session window. |
+| Registering a duplicate email | `POST /voters/register` | `409` | The email is already in the system. If this is unexpected, check whether the voter previously registered under the same address. |
+| Starting a vote when no voters are registered | `POST /voting/start-vote` | `404` | Register at least one voter via `POST /voters/register` before calling `start-vote`. |
+| Missing voting configuration | `GET /voting/vote-status` | `404` | The voting configuration record does not exist in the database. Ensure the system is initialised correctly before querying status. |
+
+<Warning>
+  Session cookies expire after **10 minutes**. If the session expires between calling `/voters/check_n1` and `/voters/submit_vote`, the submit call returns `403`. The voter must call `/voters/check_n1` again to get a fresh session before resubmitting.
+</Warning>
+
+<Note>
+  The `POST /voters/check_n1` endpoint returns `200` regardless of whether the N1 code is valid — it does not return a `4xx` error for an unrecognised code. Check the `is_N1_exist` field in the response body to determine whether the code was accepted.
+</Note>

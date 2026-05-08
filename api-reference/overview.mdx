@@ -1,0 +1,78 @@
+---
+title: 'API reference overview for Crypto E-Voting'
+description: 'Complete reference for the Crypto E-Voting REST API — covers base URL, content type, session authentication, and all 12 available endpoints.'
+---
+
+The Crypto E-Voting API is a FastAPI-based REST API that handles voter registration, encrypted ballot submission, vote tallying, and system configuration. Every request and response uses JSON. All paths documented here are relative to the server's base URL.
+
+## Base URL
+
+The server runs at a configurable host. All endpoint paths listed in this reference are relative to that host. For example, if your server runs at `https://api.example.com`, the health check endpoint is:
+
+```
+https://api.example.com/health
+```
+
+No versioning prefix is applied — paths start directly from the root.
+
+## Content type
+
+All requests that include a body must set the `Content-Type` header to `application/json`. All responses from the API are returned as `application/json`.
+
+```http
+Content-Type: application/json
+Accept: application/json
+```
+
+## Session authentication
+
+This API uses **HTTP session cookies** for authentication, not API keys or JWTs. The session cookie is set automatically by the server when you call `/voters/check_n1`.
+
+The voting flow requires two sequential calls:
+
+1. **`POST /voters/check_n1`** — submit your N1 code. If the code is valid, the server stores it in your session.
+2. **`POST /voters/submit_vote`** — submit your encrypted ballot. The server reads the N1 code from your session automatically and clears it after the vote is accepted.
+
+<Warning>
+  If you call `/voters/submit_vote` without first calling `/voters/check_n1` in the same session, the API returns **403 Forbidden**. The session also expires after **10 minutes** of inactivity — if the session expires between the two calls, you must call `/voters/check_n1` again.
+</Warning>
+
+<Note>
+  The session cookie is configured with `SameSite=None`, which requires the API to be served over **HTTPS**. Calls over plain HTTP will not work.
+</Note>
+
+## All endpoints
+
+The table below lists every endpoint available in the API.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Returns `{"status": "ok"}` to confirm the server is running |
+| `GET` | `/` | Root endpoint — returns a message confirming the API is running |
+| `POST` | `/voters/register` | Register a new voter by email address |
+| `POST` | `/voters/check_n1` | Validate a voter's N1 code and store it in the session |
+| `POST` | `/voters/submit_vote` | Submit an encrypted ballot (requires N1 verified in session) |
+| `POST` | `/voting/start-vote` | Start the election and send credentials to all registered voters |
+| `POST` | `/voting/end-vote` | End the election and trigger the vote counting pipeline |
+| `GET` | `/voting/vote-status` | Get the current voting status (`register`, `vote_started`, or `vote_ended`) |
+| `GET` | `/results/tally` | Retrieve vote counts and percentages for all candidates |
+| `POST` | `/results/verify-vote` | Verify whether a ballot was received and counted, using an N2 fingerprint |
+| `GET` | `/config/voting-system-config` | Retrieve the current voting system configuration |
+| `PATCH` | `/config/voting-system-config` | Update one or more voting configuration fields |
+
+## Explore by group
+
+<CardGroup cols={2}>
+  <Card title="Voters" icon="user" href="/api-reference/voters/register">
+    Register voters, verify N1 codes, and submit encrypted ballots.
+  </Card>
+  <Card title="Voting session" icon="flag" href="/api-reference/voting/start-vote">
+    Start and end the election, and check the current voting status.
+  </Card>
+  <Card title="Results" icon="chart-bar" href="/api-reference/results/tally">
+    Retrieve the vote tally and verify individual ballots by N2 fingerprint.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/api-reference/config/get-config">
+    Read and update the voting system configuration, including candidates and ballot theme.
+  </Card>
+</CardGroup>

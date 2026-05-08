@@ -1,0 +1,86 @@
+---
+title: 'POST /voters/submit_vote — submit an encrypted ballot'
+description: 'Complete the voting flow by submitting an encrypted ballot. The server reads N1 from the session, clears it, and forwards the ballot to the anonymizer pipeline.'
+---
+
+This endpoint completes the voting flow. You send your second credential (N2) and your ballot choice, and the server retrieves N1 from the session that was established by `/voters/check_n1`. The ballot is passed through the RSA blind signature pipeline before being forwarded to the anonymizer service, ensuring your vote cannot be linked back to your identity. Once the vote is accepted, N1 is removed from the session so it cannot be reused.
+
+<Info>
+  The submitted vote passes through the RSA blind signature pipeline before it is stored. This ensures votes are unlinkable to individual voters even if the storage layer is compromised.
+</Info>
+
+## Prerequisites
+
+You must call `/voters/check_n1` in the same session before calling this endpoint. The server reads N1 from the session automatically. If N1 is not in the session the endpoint returns `403`.
+
+## Request
+
+`POST /voters/submit_vote`
+
+### Body
+
+<ParamField body="n2" type="string" required>
+  The second credential nonce from the voter's credential email. Used together with N1 (retrieved from the session) to authenticate the ballot submission.
+</ParamField>
+
+<ParamField body="vote" type="string" required>
+  The voter's ballot choice. Must be a recognised vote option string as defined by the active election configuration.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"success"` when the ballot was accepted and forwarded to the anonymizer.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable confirmation, for example `"Vote submitted successfully and sent to anonymizer"`.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Ballot accepted and forwarded to the anonymizer. |
+| `403` | N1 not found in the session — call `/voters/check_n1` first, or re-call it if the session expired. |
+| `400` | Invalid `n2` format, unrecognised vote choice, or other validation failure. |
+| `500` | Unexpected server-side error during ballot processing. |
+
+<Expandable title="200 — success">
+
+```json
+{
+  "status": "success",
+  "message": "Vote submitted successfully and sent to anonymizer"
+}
+```
+
+</Expandable>
+
+<Note>
+  N1 is cleared from the session as soon as the vote is accepted. This prevents double voting — if you call `/voters/submit_vote` a second time in the same session it will return `403` until you go through `/voters/check_n1` again.
+</Note>
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://your-api/voters/submit_vote \
+  -H "Content-Type: application/json" \
+  -c cookies.txt -b cookies.txt \
+  -d '{"n2": "f7e8d9c0b1a2...", "vote": "candidate_a"}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "success",
+  "message": "Vote submitted successfully and sent to anonymizer"
+}
+```
+
+</ResponseExample>

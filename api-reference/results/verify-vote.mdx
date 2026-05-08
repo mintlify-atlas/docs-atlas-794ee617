@@ -1,0 +1,133 @@
+---
+title: 'POST /results/verify-vote — confirm your ballot was counted'
+description: 'Look up your vote by N2 fingerprint to confirm it was received and counted. Returns the vote status and, if valid, the recorded choice.'
+---
+
+Use this endpoint to confirm that your vote was received by the system and counted correctly. You submit your N2 fingerprint — the second credential you received by email — and the API returns whether a matching vote was found, what status it carries, and (if the vote is valid) the choice that was recorded. This endpoint is read-only: calling it does not affect your vote, its status, or the election tally in any way.
+
+## Request
+
+`POST /results/verify-vote`
+
+### Body
+
+<ParamField body="n2" type="string" required>
+  Your N2 fingerprint — the second credential you received by email after registering. This is used to look up your vote record. Do not use your N1 credential here; only N2 is accepted.
+</ParamField>
+
+## Response
+
+<ResponseField name="found" type="boolean" required>
+  `true` if a vote with the provided N2 fingerprint exists in the system; `false` otherwise.
+</ResponseField>
+
+<ResponseField name="status" type="string | null" required>
+  The status of your vote. One of `"valid"`, `"invalid_signature"`, or `"invalid_n2"`. `null` when no vote was found (`found` is `false`).
+</ResponseField>
+
+<ResponseField name="vote" type="string | null" required>
+  The candidate choice recorded for your vote. Only present when `status` is `"valid"`. `null` in all other cases to avoid disclosing data when tampering or eligibility issues are detected.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  A human-readable explanation of the result, describing what the status means for your vote.
+</ResponseField>
+
+## HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Lookup completed. Check the `found` and `status` fields to interpret the result. |
+| `500` | Internal server error while verifying the vote. |
+
+## Response scenarios
+
+<Tabs>
+  <Tab title="Vote not found">
+
+```json
+{
+  "found": false,
+  "status": null,
+  "vote": null,
+  "message": "No vote found with this N2 fingerprint"
+}
+```
+
+  </Tab>
+  <Tab title="Valid">
+
+```json
+{
+  "found": true,
+  "status": "valid",
+  "vote": "Candidate A",
+  "message": "Your vote was counted successfully"
+}
+```
+
+  </Tab>
+  <Tab title="Invalid signature">
+
+```json
+{
+  "found": true,
+  "status": "invalid_signature",
+  "vote": null,
+  "message": "Your vote was rejected due to invalid signature"
+}
+```
+
+  </Tab>
+  <Tab title="Invalid N2">
+
+```json
+{
+  "found": true,
+  "status": "invalid_n2",
+  "vote": null,
+  "message": "Your vote was rejected due to invalid N2 fingerprint"
+}
+```
+
+  </Tab>
+</Tabs>
+
+<Note>
+  This endpoint is read-only. Calling it does not change your vote, its status, or the election tally.
+</Note>
+
+<Info>
+
+**What each invalid status means:**
+
+- **`invalid_signature`** — Your vote was received but the digital signature could not be verified against your registered public key. This can happen if the vote data was tampered with after signing, the wrong private key was used, or the signature was corrupted in transit. Your vote was not counted, and the recorded choice is not disclosed because potential tampering was detected.
+
+- **`invalid_n2`** — Your vote was received but the N2 fingerprint validation failed. This means the N2 value in the vote did not match your registered credentials. Your vote was not counted. Check that your voter registration was completed correctly and that your N2 fingerprint was computed and submitted accurately.
+
+</Info>
+
+## Example
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://your-api/results/verify-vote \
+  -H "Content-Type: application/json" \
+  -d '{"n2": "your-n2-fingerprint-here"}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "found": true,
+  "status": "valid",
+  "vote": "Candidate A",
+  "message": "Your vote was counted successfully"
+}
+```
+
+</ResponseExample>
